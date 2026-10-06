@@ -61,6 +61,21 @@ db.exec(`
 
 const app = express();
 app.use(express.json({ limit: '64kb' }));
+
+/* ------------------------------------------------------------- apk download
+ * Registered BEFORE express.static so the directory redirect (301 /download ->
+ * /download/) never swallows it.
+ *   GET /download              -> streams public/download/Snappay.apk as an
+ *                                 attachment named Snappay.apk
+ *   GET /download/Snappay.apk  -> same file, served statically from public/
+ */
+const PATCHED_APK = path.join(__dirname, 'public', 'download', 'Snappay.apk');
+app.get(['/download', '/download/'], (_req, res) => {
+  if (!fs.existsSync(PATCHED_APK)) return res.status(404).json({ error: 'apk not uploaded' });
+  res.setHeader('Content-Type', 'application/vnd.android.package-archive');
+  res.download(PATCHED_APK, 'Snappay.apk');
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
 
 const nowIso = () => new Date().toISOString();
@@ -139,6 +154,8 @@ app.get('/api/app/download', (req, res) => {
   const v = req.query.v ? `?v=${encodeURIComponent(String(req.query.v))}` : '';
   res.redirect(302, `${ORIGINAL_PANEL}/api/app/download${v}`);
 });
+
+/* (apk download route is registered above express.static — see top of file) */
 
 /* ------------------------------------------------------------------ session */
 

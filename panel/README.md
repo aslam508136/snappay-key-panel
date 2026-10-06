@@ -11,6 +11,7 @@ Version checks / APK downloads keep going to the original panel
 | `POST /api/keys/validate` (alias `POST /v`) | APK (Splash / Login / MainActivity) | `{valid, status, message, expiresAt}` — device-bound, exact original contract |
 | `GET /api/app/version` | optional | proxies to the original panel (updates keep working if you ever repoint everything) |
 | `GET /api/app/download?v=` | optional | 302 → original panel download |
+| `GET /download` | anyone | downloads `Snappay.apk` (patched APK, also at `/download/Snappay.apk`) |
 | `POST /api/keys/create` | your Telegram bot | header `X-Panel-Token` |
 | `GET /`, `POST /api/admin/login`, `GET/POST/DELETE /api/admin/...` | you (browser) | dashboard: generate / revoke / device view |
 
