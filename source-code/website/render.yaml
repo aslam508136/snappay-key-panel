@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: snappay-z
+    runtime: node
+    plan: free
+    rootDir: panel
+    buildCommand: npm install
+    startCommand: node server.js
+    healthCheckPath: /api/health
+    envVars:
+      - key: ADMIN_PASSWORD
+        generateValue: true
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: ORIGINAL_PANEL
+        value: https://snappay-web.vercel.app
+      # keeps the free instance awake (15-min idle spin-down + filesystem
+      # wipe are the two big Render free-tier traps; see panel/README.md)
+      - key: KEEPALIVE_URL
+        value: https://snappay-z.onrender.com/api/health
+      - key: KEEPALIVE_MIN
+        value: 9
+      - key: NODE_VERSION
+        value: 24

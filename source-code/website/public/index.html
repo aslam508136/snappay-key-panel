@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SnapPay — Key Panel</title>
+<style>
+  :root { --bg:#0f1020; --card:#181a33; --line:#2a2d55; --txt:#e9eaff; --mut:#9aa0d0; --ok:#39d98a; --bad:#ff5c7a; --acc:#7c5cff; }
+  * { box-sizing:border-box }
+  body { margin:0; background:var(--bg); color:var(--txt); font:14px/1.5 system-ui,Segoe UI,Roboto,sans-serif }
+  header { padding:18px 24px; border-bottom:1px solid var(--line); display:flex; gap:14px; align-items:center; justify-content:space-between }
+  h1 { font-size:17px; margin:0; letter-spacing:.3px }
+  .wrap { max-width:1080px; margin:0 auto; padding:22px 20px 60px }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:18px; margin-bottom:18px }
+  .stats { display:flex; gap:12px; flex-wrap:wrap }
+  .stat { flex:1 1 140px; background:#12142b; border:1px solid var(--line); border-radius:10px; padding:12px }
+  .stat b { display:block; font-size:22px }
+  .stat span { color:var(--mut); font-size:12px }
+  label { display:block; color:var(--mut); font-size:12px; margin:8px 0 4px }
+  input,select,button { font:inherit; border-radius:8px; border:1px solid var(--line); background:#10122a; color:var(--txt); padding:9px 11px }
+  input:focus,select:focus { outline:1px solid var(--acc) }
+  button { background:var(--acc); border-color:var(--acc); cursor:pointer; font-weight:600 }
+  .ghost { background:transparent; border:1px solid var(--line); border-radius:8px; color:var(--mut); padding:9px 11px; font-size:14px; display:inline-block }
+  button.danger { background:#3a1220; border-color:#5a1b30; color:var(--bad) }
+  .row { display:flex; gap:10px; flex-wrap:wrap; align-items:end }
+  table { width:100%; border-collapse:collapse; font-size:13px }
+  th,td { text-align:left; padding:9px 8px; border-bottom:1px solid var(--line) }
+  th { color:var(--mut); font-weight:500; font-size:12px }
+  .pill { padding:2px 8px; border-radius:999px; font-size:11px; border:1px solid }
+  .pill.ok { color:var(--ok); border-color:#1c6b47; background:#0d2a1f }
+  .pill.no { color:var(--bad); border-color:#5a1b30; background:#2a0f19 }
+  .pill.warn { color:#ffc14d; border-color:#6b5218; background:#2b2210 }
+  .key { font-family:ui-monospace,Consolas,monospace; letter-spacing:.5px }
+  #login { max-width:360px; margin:12vh auto }
+  #dash { display:none }
+  .out { background:#10122a; border:1px dashed var(--line); border-radius:8px; padding:10px; font-family:ui-monospace,monospace; white-space:pre-wrap; word-break:break-all; margin-top:10px }
+  .muted { color:var(--mut) }
+  .acts button { padding:5px 9px; font-size:12px; margin-right:6px }
+</style>
+</head>
+<body>
+<header>
+  <h1>SnapPay · Key Activation Panel</h1>
+  <span class="muted" id="who">self-hosted</span>
+</header>
+
+<div class="wrap">
+  <div id="login" class="card">
+    <h2 style="margin-top:0">Admin login</h2>
+    <label>Password</label>
+    <div class="row">
+      <input type="password" id="pw" style="flex:1" />
+      <button onclick="login()">Sign in</button>
+    </div>
+    <p class="muted" id="loginErr" style="color:var(--bad)"></p>
+  </div>
+
+  <div id="dash">
+    <div class="card">
+      <div class="stats" id="stats"></div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0">Generate keys</h3>
+      <div class="row">
+        <div><label>Count</label><input id="count" type="number" value="5" min="1" max="100" style="width:90px" /></div>
+        <div><label>Validity (days)</label><input id="days" type="number" value="30" min="1" max="3650" style="width:120px" /></div>
+        <div><label>Prefix</label><input id="prefix" value="SNP" maxlength="6" style="width:90px" /></div>
+        <div><label>Note (buyer / order)</label><input id="note" placeholder="telegram @user" style="width:220px" /></div>
+        <button onclick="createKeys()">Generate</button>
+      </div>
+      <div class="out" id="newKeys" hidden></div>
+    </div>
+
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <h3 style="margin:0">Keys</h3>
+        <div class="row">
+          <input id="q" placeholder="search key / note / device" style="width:240px" oninput="render()" />
+          <button class="ghost" onclick="load()">↻ Refresh</button>
+          <a class="ghost" href="/api/admin/backup" style="padding:9px 11px;text-decoration:none">⤓ Backup</a>
+          <label class="ghost" for="restoreFile" style="padding:9px 11px;cursor:pointer;border-radius:8px;border:1px solid var(--line);color:var(--mut);font-size:14px">⤒ Restore</label>
+          <input type="file" id="restoreFile" accept="application/json" style="display:none" onchange="restore(this.files[0])" />
+          <button class="ghost" onclick="logout()">Logout</button>
+        </div>
+      </div>
+      <div style="overflow:auto">
+        <table>
+          <thead><tr><th>Key</th><th>Status</th><th>Expires</th><th>Device</th><th>Note</th><th>Last seen</th><th></th></tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+let KEYS = [];
+const $ = (id) => document.getElementById(id);
+const api = async (url, opts = {}) => {
+  const r = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...opts });
+  if (r.status === 401) { showLogin(); throw new Error('unauthorized'); }
+  return r.json();
+};
+
+function showLogin() { $('login').style.display = 'block'; $('dash').style.display = 'none'; }
+function showDash()  { $('login').style.display = 'none';  $('dash').style.display = 'block'; load(); }
+
+async function login() {
+  $('loginErr').textContent = '';
+  const r = await fetch('/api/admin/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: $('pw').value }) });
+  if (!r.ok) { $('loginErr').textContent = 'Wrong password'; return; }
+  showDash();
+}
+function logout() { document.cookie = 'panel_session=; Path=/; Max-Age=0'; showLogin(); }
+
+async function load() {
+  KEYS = await api('/api/admin/keys');
+  if (KEYS.length) {
+    window._snTried = true; saveCache();
+  } else if (!window._snTried) {
+    // first look of this session on an empty panel: either the server disk was
+    // wiped (auto-restore from this browser's last snapshot) — or a fresh panel
+    window._snTried = true;
+    try {
+      const cached = JSON.parse(localStorage.getItem('snappay_keys_backup') || '[]');
+      if (cached.length) {
+        await api('/api/admin/restore', { method: 'POST', body: JSON.stringify({ keys: cached }) });
+        KEYS = await api('/api/admin/keys');
+      }
+    } catch (_) {}
+    saveCache();
+  } else {
+    saveCache(); // user emptied the panel for real — keep the mirror in sync
+  }
+  const s = await api('/api/admin/stats');
+  $('stats').innerHTML = `
+    <div class="stat"><b>${s.total}</b><span>Total keys</span></div>
+    <div class="stat"><b style="color:var(--ok)">${s.active}</b><span>Active</span></div>
+    <div class="stat"><b style="color:var(--bad)">${s.revoked}</b><span>Revoked</span></div>
+    <div class="stat"><b>${s.bound}</b><span>Device-bound</span></div>`;
+  render();
+}
+
+function render() {
+  const q = ($('q').value || '').toLowerCase();
+  const now = Date.now();
+  $('rows').innerHTML = KEYS
+    .filter(k => !q || (k.key + ' ' + (k.note||'') + ' ' + (k.device_id||'')).toLowerCase().includes(q))
+    .map(k => {
+      const expired = new Date(k.expires_at).getTime() < now;
+      const pill = k.status === 'revoked' ? '<span class="pill no">revoked</span>'
+                 : expired ? '<span class="pill warn">expired</span>'
+                 : '<span class="pill ok">active</span>';
+      const dev = k.device_id ? k.device_id : '<span class="muted">—</span>';
+      const act = k.status === 'revoked'
+        ? `<button class="ghost" onclick="setState('${k.key}','active')">Activate</button>`
+        : `<button class="danger" onclick="setState('${k.key}','revoked')">Revoke</button>`;
+      return `<tr>
+        <td class="key">${k.key}</td><td>${pill}</td>
+        <td>${new Date(k.expires_at).toLocaleDateString()}</td>
+        <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis" title="${k.device_id||''}">${dev}</td>
+        <td class="muted">${k.note || ''}</td>
+        <td class="muted">${k.last_seen ? new Date(k.last_seen).toLocaleString() : '—'}</td>
+        <td class="acts">${act}<button class="ghost" onclick="del('${k.key}')">Delete</button></td>
+      </tr>`;
+    }).join('') || '<tr><td colspan="7" class="muted">No keys</td></tr>';
+}
+
+function saveCache() { try { localStorage.setItem('snappay_keys_backup', JSON.stringify(KEYS)); } catch (_) {} }
+
+async function createKeys() {
+  const r = await api('/api/admin/keys', { method: 'POST', body: JSON.stringify({
+    count: +$('count').value, days: +$('days').value, prefix: $('prefix').value, note: $('note').value
+  })});
+  $('newKeys').hidden = false;
+  $('newKeys').textContent = 'Expires: ' + r.expires + '\n\n' + r.created.join('\n');
+  load();
+}
+async function restore(file) {
+  if (!file) return;
+  try {
+    const data = JSON.parse(await file.text());
+    const r = await api('/api/admin/restore', { method: 'POST', body: JSON.stringify({ keys: data.keys || [] }) });
+    alert('Restored ' + r.restored + ' keys');
+    load();
+  } catch (e) { alert('Invalid backup file'); }
+  document.getElementById('restoreFile').value = '';
+}
+
+async function setState(key, state) { await api('/api/admin/keys/' + encodeURIComponent(key) + '/state', { method: 'POST', body: JSON.stringify({ state }) }); load(); }
+async function del(key) { if (confirm('Delete ' + key + ' ?')) { await api('/api/admin/keys/' + encodeURIComponent(key), { method: 'DELETE' }); load(); } }
+
+(async () => { try { await api('/api/admin/stats'); showDash(); } catch (_) { showLogin(); } })();
+$('pw').addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
+</script>
+</body>
+</html>

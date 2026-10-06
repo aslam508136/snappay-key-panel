@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system"/>
+        </trust-anchors>
+    </base-config>
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">snappay-b414.onrender.com
+        </domain>
+        <pin-set expiration="2027-01-01"> --&gt; 
+            <pin digest="SHA-256">kIdp6NNEd8wsugYyyIYFsi1ylMCED3hZbSR8ZFsa/A4=
+            </pin>
+            <pin digest="SHA-256">NnfKqDbhvUeabxD97xg7r9JvWoGY7BJjg8XThNJxVbk=
+            </pin>
+        </pin-set>
+    </domain-config>
+</network-security-config>

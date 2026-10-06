@@ -1,0 +1,17 @@
+{
+  "name": "snappay-key-panel",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Self-hosted key activation panel for SnapPay (validate + admin)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "engines": {
+    "node": ">=22.5"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}
