@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: snappay-key-panel
+    name: snappay-z
     runtime: node
     plan: free
     rootDir: panel
@@ -14,13 +14,11 @@ services:
         generateValue: true
       - key: ORIGINAL_PANEL
         value: https://snappay-web.vercel.app
-      # set this to YOUR service URL after the first deploy, e.g.
-      # https://snappay-key.onrender.com/api/health
-      # -> keeps the free instance awake (15-min idle spin-down + filesystem
-      #    wipe are the two big Render free-tier traps; see panel/README.md)
+      # keeps the free instance awake (15-min idle spin-down + filesystem
+      # wipe are the two big Render free-tier traps; see panel/README.md)
       - key: KEEPALIVE_URL
-        sync: false
+        value: https://snappay-z.onrender.com/api/health
       - key: KEEPALIVE_MIN
         value: 9
       - key: NODE_VERSION
-        value: 22.5.0
+        value: 24
