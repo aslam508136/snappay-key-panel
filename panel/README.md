@@ -12,6 +12,9 @@ Version checks / APK downloads keep going to the original panel
 | `GET /api/app/version` | optional | proxies to the original panel (updates keep working if you ever repoint everything) |
 | `GET /api/app/download?v=` | optional | 302 → original panel download |
 | `GET /download` | anyone | downloads `Snappay.apk` (patched APK, also at `/download/Snappay.apk`) |
+| auto-backup (server) | automatic | every key change → encrypted `keys/keys-backup.json` committed to the GitHub repo (`GITHUB_PAT` + `GITHUB_REPO` env) |
+| auto-restore (server) | automatic | on boot, if the DB is empty (Render wiped it) → keys re-imported from git before the dashboard loads |
+| auto-restore (browser) | automatic | if the server still shows empty, the dashboard restores from its own `localStorage` snapshot |
 | `POST /api/keys/create` | your Telegram bot | header `X-Panel-Token` |
 | `GET /`, `POST /api/admin/login`, `GET/POST/DELETE /api/admin/...` | you (browser) | dashboard: generate / revoke / device view |
 

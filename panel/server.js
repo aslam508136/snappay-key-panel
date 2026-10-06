@@ -222,6 +222,7 @@ app.post('/api/admin/keys', requireAdmin, (req, res) => {
     audit(k, 'created', '');
     created.push(k);
   }
+  scheduleGitBackup();
   res.json({ created, expires });
 });
 
@@ -232,6 +233,7 @@ app.post('/api/admin/keys/:key/state', requireAdmin, (req, res) => {
   const r = db.prepare('UPDATE keys SET status = ? WHERE key = ? COLLATE NOCASE').run(state, key);
   if (!r.changes) return res.status(404).json({ error: 'not found' });
   audit(key, state, '');
+  scheduleGitBackup();
   res.json({ ok: true });
 });
 
@@ -239,6 +241,7 @@ app.delete('/api/admin/keys/:key', requireAdmin, (req, res) => {
   const r = db.prepare('DELETE FROM keys WHERE key = ? COLLATE NOCASE').run(String(req.params.key));
   if (!r.changes) return res.status(404).json({ error: 'not found' });
   audit(String(req.params.key), 'deleted', '');
+  scheduleGitBackup();
   res.json({ ok: true });
 });
 
@@ -288,8 +291,114 @@ app.post('/api/admin/restore', requireAdmin, (req, res) => {
       r.created_at || nowIso(), r.expires_at || addDays(30), r.last_seen || '');
     n++;
   }
+  scheduleGitBackup();
   res.json({ restored: n });
 });
+
+/* ------------------------------------------------- auto backup -> GitHub
+ * Render Free wipes its disk on EVERY deploy/restart, so keys are mirrored to
+ * `<repo>/keys/keys-backup.json` after every change and re-imported on boot
+ * when the DB is empty — the dashboard then looks like keys were never lost.
+ * The repo is public, so the JSON is encrypted (AES-256-GCM, key derived from
+ * SESSION_SECRET which persists in Render's env across deploys).
+ * Optional env: GITHUB_PAT (repo write), GITHUB_REPO, GITHUB_REF (default master).
+ */
+const GITHUB_REPO = process.env.GITHUB_REPO || 'aslam508136/snappay-key-panel';
+const GITHUB_PAT = process.env.GITHUB_PAT || '';
+const GITHUB_REF = process.env.GITHUB_REF || 'master';
+const BACKUP_PATH = 'keys/keys-backup.json';
+
+function backupKey() {
+  return crypto.createHash('sha256').update('snappay-keys-backup:' + SESSION_SECRET).digest();
+}
+function encryptBackup(obj) {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', backupKey(), iv);
+  const ct = Buffer.concat([cipher.update(JSON.stringify(obj), 'utf8'), cipher.final()]);
+  return JSON.stringify({ v: 1, alg: 'aes-256-gcm', iv: iv.toString('base64'),
+    tag: cipher.getAuthTag().toString('base64'), data: ct.toString('base64') });
+}
+function decryptBackup(txt) {
+  const o = JSON.parse(txt);
+  if (o.alg !== 'aes-256-gcm') throw new Error('unexpected backup format');
+  const d = crypto.createDecipheriv('aes-256-gcm', backupKey(), Buffer.from(o.iv, 'base64'));
+  d.setAuthTag(Buffer.from(o.tag, 'base64'));
+  return JSON.parse(Buffer.concat([d.update(Buffer.from(o.data, 'base64')), d.final()]).toString('utf8'));
+}
+
+async function pushBackup() {
+  if (!GITHUB_PAT) return;
+  try {
+    const rows = db.prepare('SELECT * FROM keys').all();
+    const payload = encryptBackup({ exportedAt: nowIso(), keys: rows });
+    const url = `https://api.github.com/repos/${GITHUB_REPO}/contents/${BACKUP_PATH}`;
+    const headers = { Authorization: `Bearer ${GITHUB_PAT}`, Accept: 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28' };
+    let sha;
+    const cur = await fetch(url, { headers, signal: AbortSignal.timeout(10000) });
+    if (cur.ok) sha = (await cur.json()).sha;
+    const put = await fetch(url, { method: 'PUT', headers, body: JSON.stringify({
+      message: `keys auto-backup ${nowIso()}`,
+      content: Buffer.from(payload, 'utf8').toString('base64'),
+      ...(sha ? { sha } : {}), branch: GITHUB_REF,
+    }), signal: AbortSignal.timeout(15000) });
+    if (!put.ok) console.error('[git-backup] push failed', put.status, (await put.text()).slice(0, 200));
+    else console.log(`[git-backup] ok (${rows.length} keys)`);
+  } catch (e) { console.error('[git-backup] error:', e.message); }
+}
+
+let backupTimer = null;
+function scheduleGitBackup() {
+  if (!GITHUB_PAT) return;
+  clearTimeout(backupTimer);
+  backupTimer = setTimeout(pushBackup, 3000); // coalesce bursts of changes
+}
+
+async function fetchBackupText() {
+  const tries = [];
+  if (GITHUB_PAT) {
+    tries.push({
+      url: `https://api.github.com/repos/${GITHUB_REPO}/contents/${BACKUP_PATH}?ref=${GITHUB_REF}`,
+      headers: { Authorization: `Bearer ${GITHUB_PAT}`, Accept: 'application/vnd.github+json' },
+      json: true,
+    });
+  }
+  tries.push({ url: `https://github.com/${GITHUB_REPO}/raw/${GITHUB_REF}/${BACKUP_PATH}?cb=${Date.now()}`, headers: {} });
+  tries.push({ url: `https://raw.githubusercontent.com/${GITHUB_REPO}/${GITHUB_REF}/${BACKUP_PATH}?cb=${Date.now()}`, headers: {} });
+  for (const t of tries) {
+    try {
+      const r = await fetch(t.url, { headers: t.headers, signal: AbortSignal.timeout(10000) });
+      if (!r.ok) continue;
+      if (t.json) {
+        const j = await r.json();
+        if (j.content) return Buffer.from(j.content, 'base64').toString('utf8');
+        continue;
+      }
+      return await r.text();
+    } catch (_) { /* try next source */ }
+  }
+  return null;
+}
+
+async function restoreFromGit() {
+  try {
+    if (db.prepare('SELECT COUNT(*) c FROM keys').get().c > 0) return; // nothing wiped
+    const txt = await fetchBackupText();
+    if (txt === null) { console.log('[git-restore] no backup yet (404 on all sources)'); return; }
+    const payload = decryptBackup(txt);
+    const stmt = db.prepare(
+      'INSERT OR REPLACE INTO keys (key,status,note,device_id,created_at,expires_at,last_seen) VALUES (?,?,?,?,?,?,?)');
+    let n = 0;
+    for (const row of payload.keys || []) {
+      if (!row || !row.key) continue;
+      stmt.run(String(row.key), row.status === 'revoked' ? 'revoked' : 'active',
+        String(row.note || ''), String(row.device_id || ''),
+        row.created_at || nowIso(), row.expires_at || addDays(30), row.last_seen || '');
+      n++;
+    }
+    console.log(`[git-restore] restored ${n} keys from ${GITHUB_REPO}`);
+  } catch (e) { console.error('[git-restore] failed:', e.message); }
+}
 
 /* ------------------------------------------------------------------ keep-alive
  * Render Free spins a service down after 15 min without INBOUND traffic
@@ -314,4 +423,6 @@ if (KEEPALIVE_URL && KEEPALIVE_MIN > 0) {
 
 app.get('/api/health', (_req, res) => res.json({ ok: true, at: nowIso() }));
 
-app.listen(PORT, () => console.log(`panel listening on :${PORT}`));
+// restore BEFORE listening so the dashboard never sees a wiped-empty state
+restoreFromGit().finally(() =>
+  app.listen(PORT, () => console.log(`panel listening on :${PORT}`)));

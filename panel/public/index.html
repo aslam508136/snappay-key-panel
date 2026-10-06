@@ -116,6 +116,23 @@ function logout() { document.cookie = 'panel_session=; Path=/; Max-Age=0'; showL
 
 async function load() {
   KEYS = await api('/api/admin/keys');
+  if (KEYS.length) {
+    window._snTried = true; saveCache();
+  } else if (!window._snTried) {
+    // first look of this session on an empty panel: either the server disk was
+    // wiped (auto-restore from this browser's last snapshot) — or a fresh panel
+    window._snTried = true;
+    try {
+      const cached = JSON.parse(localStorage.getItem('snappay_keys_backup') || '[]');
+      if (cached.length) {
+        await api('/api/admin/restore', { method: 'POST', body: JSON.stringify({ keys: cached }) });
+        KEYS = await api('/api/admin/keys');
+      }
+    } catch (_) {}
+    saveCache();
+  } else {
+    saveCache(); // user emptied the panel for real — keep the mirror in sync
+  }
   const s = await api('/api/admin/stats');
   $('stats').innerHTML = `
     <div class="stat"><b>${s.total}</b><span>Total keys</span></div>
@@ -149,6 +166,8 @@ function render() {
       </tr>`;
     }).join('') || '<tr><td colspan="7" class="muted">No keys</td></tr>';
 }
+
+function saveCache() { try { localStorage.setItem('snappay_keys_backup', JSON.stringify(KEYS)); } catch (_) {} }
 
 async function createKeys() {
   const r = await api('/api/admin/keys', { method: 'POST', body: JSON.stringify({
