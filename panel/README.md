@@ -9,7 +9,7 @@ Version checks / APK downloads keep going to the original panel
 | Route | Who calls it | What it does |
 |---|---|---|
 | `POST /api/keys/validate` (alias `POST /v`) | APK (Splash / Login / MainActivity) | `{valid, status, message, expiresAt}` — device-bound, exact original contract |
-| `GET /api/app/version` | optional | proxies to the original panel (updates keep working if you ever repoint everything) |
+| `GET /api/app/version` | APK (update check) | **static** `1.4.6` / code `146` — deliberately never proxies OG, so the in-app "UPDATE NOW" dialog can never install the original APK over the patched one (your keys keep working)
 | `GET /api/app/download?v=` | optional | 302 → original panel download |
 | `GET /download` | anyone | downloads `Snappay.apk` (patched APK, also at `/download/Snappay.apk`) |
 | auto-backup (server) | automatic | every key change → encrypted `keys/keys-backup.json` committed to the GitHub repo (`GITHUB_PAT` + `GITHUB_REPO` env) |
