@@ -130,6 +130,9 @@ const validateHandler = (req, res) => {
   const deviceToStore = row.device_id || deviceId || '';
   db.prepare('UPDATE keys SET device_id = ?, last_seen = ? WHERE key = ?')
     .run(deviceToStore, nowIso(), row.key);
+  // a fresh bind IS security state — persist it to git, otherwise the next
+  // Render disk-wipe restores the key unbound and any device could activate it
+  if (!row.device_id && deviceToStore) scheduleGitBackup();
   audit(row.key, 'valid', deviceId);
 
   res.json({ valid: true, status: 'active', message: 'Key is active', expiresAt: row.expires_at });
@@ -272,6 +275,7 @@ app.post('/api/keys/create', (req, res) => {
     audit(k, 'created', 'bot');
     created.push(k);
   }
+  scheduleGitBackup(); // bot-created keys must survive a disk-wipe too
   res.json({ created, expires });
 });
 
