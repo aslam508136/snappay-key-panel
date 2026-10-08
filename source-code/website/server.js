@@ -8,7 +8,7 @@
  *     response: { valid: bool, status: string, message: string, expiresAt: string }
  *     status  : active | activated | expired | revoked | not_found | device_mismatch
  *
- *   GET /api/app/version  -> proxied to the original panel (updates keep working)
+ *   GET /api/app/version  -> STATIC v1.4.6/146 — blocks the in-app update dialog forever
  *   GET /api/app/download -> redirect to the original panel
  *
  * Admin:
@@ -139,15 +139,25 @@ const validateHandler = (req, res) => {
 // 48-byte slot inside the APK's dex even when the panel domain is long
 app.post(['/v', '/api/keys/validate'], validateHandler);
 
-/* ------------------------------------------------- app update (proxy to OG) */
+/* ------------------------------------------------- app update (DELIBERATELY STATIC)
+ * The patched APK's version-check URL points HERE instead of the OG panel.
+ * The app shows a full-screen "UPDATE NOW" dialog whenever server versionCode >
+ * installed versionCode — and that update installs the ORIGINAL APK over ours,
+ * switching key validation back to the OG server (our keys would die).
+ * So we always report the currently installed version and never proxy the OG
+ * panel: no matter what OG releases, the dialog can never appear.
+ * Bump version/versionCode here ONLY if you ship a patched APK with a higher
+ * versionCode (must stay == installed APK's android:versionCode).
+ */
 
-app.get('/api/app/version', async (_req, res) => {
-  try {
-    const r = await fetch(`${ORIGINAL_PANEL}/api/app/version`, { signal: AbortSignal.timeout(8000) });
-    res.status(r.status).json(await r.json());
-  } catch (_) {
-    res.status(200).json({ version: '', versionCode: 0, releaseNotes: '', downloadUrl: '', forceUpdate: false, minSupportedVersion: 0 });
-  }
+app.get('/api/app/version', (_req, res) => {
+  res.json({
+    version: '1.4.6',
+    versionCode: 146,
+    releaseNotes: 'Bug fixes and improvements.',
+    forceUpdate: false,
+    minSupportedVersion: 0,
+  });
 });
 
 app.get('/api/app/download', (req, res) => {

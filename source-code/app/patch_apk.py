@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """
-Patch the SnapPay APK so /api/keys/validate points at your own panel,
-while everything else (version check, download) keeps using the original panel.
+Patch the SnapPay APK so /api/keys/validate points at your own panel AND the
+version check hits YOUR panel (static versionCode) — otherwise a future OG
+release shows the in-app "UPDATE NOW" dialog, whose APK download installs the
+ORIGINAL app over the patched one and switches key validation back to their
+server (your keys stop working).
 
 Why in-place byte patch instead of apktool/smali:
   DEX stores string_data at absolute file offsets referenced by string_ids.
@@ -26,6 +29,31 @@ import zlib
 import zipfile
 
 OLD_URL = b"https://snappay-web.vercel.app/api/keys/validate"
+OLD_VERSION_URL = b"https://snappay-web.vercel.app/api/app/version"
+# Same byte length as OLD_VERSION_URL (46) so the string stays in place, and it
+# sorts BETWEEN "https://snappay-web.vercel.app" and the patched validate URL
+# (snappay-w < snappay-z, path "api..." < "v..."), so dex string_ids stay sorted.
+NEW_VERSION_URL = b"https://snappay-z.onrender.com/api/app/version"
+
+
+def mutf8_units(b):
+    """Decode MUTF-8 bytes to UTF-16 code units (the dex string_ids sort key)."""
+    units = []
+    i = 0
+    while i < len(b):
+        c = b[i]
+        if c < 0x80:
+            units.append(c)
+            i += 1
+        elif c & 0xE0 == 0xC0:
+            units.append(((c & 0x1F) << 6) | (b[i + 1] & 0x3F))
+            i += 2
+        elif c & 0xF0 == 0xE0:
+            units.append(((c & 0x0F) << 12) | ((b[i + 1] & 0x3F) << 6) | (b[i + 2] & 0x3F))
+            i += 3
+        else:
+            sys.exit("ERROR: unexpected MUTF-8 lead byte while checking string order")
+    return units
 
 
 def iter_dex_strings(d):
@@ -45,37 +73,47 @@ def iter_dex_strings(d):
 
 
 def patch_dex(data, new_url_bytes):
-    if b"\x00" in new_url_bytes:
-        sys.exit("ERROR: URL contains NUL byte")
-    if len(new_url_bytes) != len(OLD_URL):
-        sys.exit(
-            f"ERROR: URL is {len(new_url_bytes)} bytes, must be exactly {len(OLD_URL)}.\n"
-            "       Use a shorter path (the panel also serves /v) or a shorter domain."
-        )
+    pairs = [(OLD_URL, new_url_bytes), (OLD_VERSION_URL, NEW_VERSION_URL)]
+    for old, new in pairs:
+        if b"\x00" in new:
+            sys.exit("ERROR: URL contains NUL byte")
+        if len(new) != len(old):
+            sys.exit(
+                f"ERROR: {new.decode('ascii', 'replace')} is {len(new)} bytes, "
+                f"must be exactly {len(old)} (same-length in-place patch).\n"
+                "       Use a shorter path (the panel also serves /v) or a shorter domain."
+            )
     buf = bytearray(data)
-    hits = 0
+    counts = {old: 0 for old, _ in pairs}
     for start, end, content in iter_dex_strings(bytes(buf)):
-        if content == OLD_URL:
-            buf[start:end] = new_url_bytes
-            hits += 1
-    if hits == 0:
-        sys.exit("ERROR: original URL not found in dex — wrong APK?")
+        for old, new in pairs:
+            if content == old:
+                buf[start:end] = new
+                counts[old] += 1
+                break
+    missing = [o.decode() for o, c in counts.items() if c == 0]
+    if missing:
+        sys.exit(f"ERROR: not found in dex — wrong APK? {missing}")
     # recompute header signature (SHA-1 of bytes[32:]) and checksum (Adler32 of bytes[12:])
     sig = hashlib.sha1(bytes(buf[32:])).digest()
     buf[12:32] = sig
     struct.pack_into("<I", buf, 8, zlib.adler32(bytes(buf[12:])) & 0xFFFFFFFF)
-    return bytes(buf), hits
+    return bytes(buf), sum(counts.values())
 
 
 def verify_dex(data, expected_url):
     strings = [c for _, _, c in iter_dex_strings(data)]
-    old = sum(1 for c in strings if c == OLD_URL)
-    new = sum(1 for c in strings if c == expected_url)
+    old = sum(1 for c in strings if c in (OLD_URL, OLD_VERSION_URL))
+    new = sum(1 for c in strings if c in (expected_url, NEW_VERSION_URL))
     adler = struct.unpack_from("<I", data, 8)[0]
     sig = data[12:32]
     ok_sig = sig == hashlib.sha1(data[32:]).digest()
     ok_adler = adler == (zlib.adler32(data[12:]) & 0xFFFFFFFF)
-    return old, new, ok_sig, ok_adler
+    # dex string_ids MUST stay sorted by UTF-16 code units, else ART rejects the
+    # dex at install ("Failure to verify dex file: Out-of-order string_ids")
+    units = [mutf8_units(s) for s in strings]
+    ok_sorted = all(units[i] <= units[i + 1] for i in range(len(units) - 1))
+    return old, new, ok_sig, ok_adler, ok_sorted
 
 
 def main():
@@ -98,10 +136,11 @@ def main():
         sys.exit("ERROR: classes.dex not found in APK")
 
     patched_dex, hits = patch_dex(zin.read("classes.dex"), target)
-    old, new, ok_sig, ok_adler = verify_dex(dex := patched_dex, target)
+    old, new, ok_sig, ok_adler, ok_sorted = verify_dex(patched_dex, target)
     print(f"[*] patched {hits} string occurrence(s); verify -> old={old} new={new} "
-          f"sha1={'ok' if ok_sig else 'BAD'} adler32={'ok' if ok_adler else 'BAD'}")
-    if old or new != hits or not ok_sig or not ok_adler:
+          f"sha1={'ok' if ok_sig else 'BAD'} adler32={'ok' if ok_adler else 'BAD'} "
+          f"string_ids_sorted={'ok' if ok_sorted else 'OUT-OF-ORDER'}")
+    if old or new != hits or not ok_sig or not ok_adler or not ok_sorted:
         sys.exit("ERROR: patched dex failed verification")
 
     with zipfile.ZipFile(a.out, "w") as zout:

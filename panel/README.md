@@ -1,8 +1,13 @@
 # SnapPay Key Panel (self-hosted)
 
 Free-host panel that your patched APK talks to for **key activation only**.
-Version checks / APK downloads keep going to the original panel
-(`https://snappay-web.vercel.app`) — nothing else is touched.
+Two builds are published:
+
+- `/download/Snappay.apk` — the **currently working** build (validate-only patch);
+  untouched, keeps its original version-check URL on the OG panel.
+- `/download/Snappay-noupdate.apk` — **backup build**: identical, plus the
+  version-check URL repointed here (static 146) so the in-app "UPDATE NOW"
+  dialog can never install the original APK over it and kill your keys.
 
 ## Endpoints
 
@@ -11,7 +16,8 @@ Version checks / APK downloads keep going to the original panel
 | `POST /api/keys/validate` (alias `POST /v`) | APK (Splash / Login / MainActivity) | `{valid, status, message, expiresAt}` — device-bound, exact original contract |
 | `GET /api/app/version` | APK (update check) | **static** `1.4.6` / code `146` — deliberately never proxies OG, so the in-app "UPDATE NOW" dialog can never install the original APK over the patched one (your keys keep working)
 | `GET /api/app/download?v=` | optional | 302 → original panel download |
-| `GET /download` | anyone | downloads `Snappay.apk` (patched APK, also at `/download/Snappay.apk`) |
+| `GET /download` | anyone | downloads `Snappay.apk` — the currently working build (also at `/download/Snappay.apk`) |
+| `GET /download/Snappay-noupdate.apk` | anyone | backup build: + version check pinned here, in-app update dialog permanently blocked |
 | auto-backup (server) | automatic | every key change → encrypted `keys/keys-backup.json` committed to the GitHub repo (`GITHUB_PAT` + `GITHUB_REPO` env) |
 | auto-restore (server) | automatic | on boot, if the DB is empty (Render wiped it) → keys re-imported from git before the dashboard loads |
 | auto-restore (browser) | automatic | if the server still shows empty, the dashboard restores from its own `localStorage` snapshot |
@@ -98,10 +104,12 @@ deploy complains, keep `express` on a plain Node service (Render is the easy pat
 # -> dist/snapay-patched.apk   (signed, installable)
 ```
 
-The script patches the single `validate` URL inside `classes.dex` (keeps the
-exact 48-byte slot, recomputes the dex SHA-1 + Adler32), strips the old
-signature and re-signs (v1/v2/v3 verified). Version/download URLs are left
-alone so updates still come from the original panel.
+The script patches the `validate` URL **and** the version-check URL inside
+`classes.dex` (same-length in-place bytes, keeps the 48/46-byte slots,
+recomputes dex SHA-1 + Adler32 and verifies `string_ids` stay sorted), strips
+the old signature and re-signs (v1/v2/v3 verified). The result is published as
+the **backup** `/download/Snappay-noupdate.apk`; the working build at
+`/download/Snappay.apk` is left exactly as it was.
 
 Uninstall the original app first — the signature differs, Android will refuse
 an in-place update.

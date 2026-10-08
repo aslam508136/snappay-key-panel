@@ -29,7 +29,9 @@ KT="tools/snapay-release.jks"
 java -jar tools/uber-apk-signer.jar -a dist/snapay-patched-unsigned.apk \
   --ks "$KT" --ksAlias snapay --ksPass SnapPay@2026 --ksKeyPass SnapPay@2026 -o dist >/dev/null
 
-APK="$(ls dist/*.apk | grep -v -- '-unsigned' | head -1)"
+# pick the just-signed APK by mtime (newest first) — name-based selection
+# broke when an unrelated backup .apk sat in dist/ (alphabetical head -1 grabbed it)
+APK="$(ls -t dist/*.apk | grep -v -- '-unsigned' | head -1)"
 mv "$APK" dist/snapay-patched.apk
 
 echo "== 3/3 verify =="
